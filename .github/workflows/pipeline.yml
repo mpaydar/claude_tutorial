@@ -1,0 +1,58 @@
+name: Data Pipeline CI
+
+on:
+  push:
+    paths:
+      - "models/**"
+      - "setup_docker_db.py"
+      - ".claude/commands/run_pipeline.md"
+      - ".github/workflows/pipeline.yml"
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    # Postgres service for this job run, credentials from GitHub Secrets.
+    # DATABASE_URL below must point at this same service (same user/password/db,
+    # host localhost, port 5432).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ${{secrets.postgres_username}}
+          POSTGRES_PASSWORD: ${{secrets.postgres_password}}
+          POSTGRES_DB: ${{secrets.postgres_name}}
+        ports:
+          - 5432:5432
+        options: 
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install psycopg2-binary
+
+      - name: Seed raw_transactions table
+        run: python setup_docker_db.py
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run data pipeline orchestrator
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: claude --print "/run_pipeline models/stg_transactions.sql" --permission-mode bypassPermissions
